@@ -175,6 +175,15 @@ class SwaggerParser(object):
         # From definition
         if '$ref' in prop_spec.keys():
             return self._example_from_definition(prop_spec)
+
+        # support allOf
+        if 'allOf' in prop_spec.keys():
+            example = {}
+            for prop_item in prop_spec['allOf']:
+                example.update(self.get_example_from_prop_spec(prop_item))
+            return example
+
+
         # Complex type
         if 'type' not in prop_spec:
             return self._example_from_complex_def(prop_spec)
@@ -183,7 +192,7 @@ class SwaggerParser(object):
             example, additional_properties = self._get_example_from_properties(prop_spec)
             if additional_properties:
                 return example
-            return [example]
+            return example
         # Array
         if prop_spec['type'] == 'array' or (isinstance(prop_spec['type'], list) and prop_spec['type'][0] == 'array'):
             return self._example_from_array_spec(prop_spec)
@@ -242,8 +251,8 @@ class SwaggerParser(object):
                 # While get_example_from_prop_spec is supposed to return a list,
                 # we don't actually want that when recursing to build from
                 # properties
-                if isinstance(partial, list):
-                    partial = partial[0]
+                # if isinstance(partial, list):
+                #     partial = partial[0]
                 example[inner_name] = partial
 
         return example, additional_property
@@ -498,18 +507,41 @@ class SwaggerParser(object):
 
         # Check all required in dict_to_test
         spec_def = definition or self.specification['definitions'][definition_name]
+
+        # if spec_def is an allOf, then we need to create the compounded definition
+        if 'allOf' in spec_def:
+            expanded_def = {}
+            # this expects $ref to be higher up in the array
+            for spec_part in spec_def['allOf']:
+                if '$ref' in spec_part:
+                    expanded_def.update(self.specification['definitions'][spec_part['$ref'].split('/')[-1]])
+                else:
+                    # todo handle required
+                    expanded_def['properties'].update(spec_part['properties'])
+            spec_def = expanded_def
+
+
         all_required_keys_present = all(req in dict_to_test.keys() for req in spec_def.get('required', {}))
         if 'required' in spec_def and not all_required_keys_present:
+            logging.warn('Missing required keys %s %s %s', definition_name, spec_def.get('required', {}), dict_to_test)
             return False
+
+        if not isinstance(dict_to_test, dict):
+            return self._validate_type(spec_def, dict_to_test)
 
         # Check no extra arg & type
         properties_dict = spec_def.get('properties', {})
         for key, value in dict_to_test.items():
+            if key == '_id':
+                # let this one go
+                continue
             if value is not None:
                 if key not in properties_dict:  # Extra arg
+                    logging.warn('Found key %s not defined in %s data=%s', key, definition_name,  dict_to_test)
                     return False
                 else:  # Check type
                     if not self._validate_type(properties_dict[key], value):
+                        logging.warn("Failed to validate %s %s %s", definition_name, properties_dict[key], value)
                         return False
 
         return True
@@ -525,6 +557,8 @@ class SwaggerParser(object):
             True if the value is valid for the given spec.
         """
         if 'type' not in properties_spec.keys():
+            if '$ref' not in properties_spec:
+                return False
             # Validate sub definition
             def_name = self.get_definition_name_from_ref(properties_spec['$ref'])
             return self.validate_definition(def_name, value)
@@ -543,6 +577,17 @@ class SwaggerParser(object):
                 def_name = self.get_definition_name_from_ref(properties_spec['items']['$ref'])
                 if any(not self.validate_definition(def_name, item) for item in value):
                     return False
+
+        # not checking object (when object is not a definition)
+        elif properties_spec['type'] == 'object':
+            if not isinstance(value, dict):
+                return False
+
+            if 'properties' not in properties_spec:
+                # its just a type: object
+                return True
+
+            return self.validate_definition(None, value, definition=properties_spec)
 
         else:  # Classic types
             if not self.check_type(value, properties_spec['type']):
