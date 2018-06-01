@@ -10,6 +10,7 @@ import re
 import six
 import sys
 import yaml
+import pprint
 
 from copy import deepcopy
 
@@ -490,6 +491,32 @@ class SwaggerParser(object):
         except Exception:
             return False
 
+
+    def expand_allOf_definition(self, spec_def):
+        """
+        Recursively expand allOf definitions
+        :param spec_def:
+        :return:
+        """
+        expanded_def = {'properties': {}}
+        # this expects $ref to be higher up in the array
+        for spec_part in spec_def['allOf']:
+            if '$ref' in spec_part:
+                defn = self.specification['definitions'][spec_part['$ref'].split('/')[-1]]
+                if 'allOf' in defn:
+                    expanded_def.update(self.expand_allOf_definition(defn))
+                else:
+                    expanded_def['properties'].update(defn['properties'])
+            else:
+                if 'allOf' in spec_part:
+                    expanded_def.update(self.expand_allOf_definition(spec_part))
+                else:
+                    # todo handle required
+                    expanded_def['properties'].update(spec_part['properties'])
+
+        logging.info('Expanded %s ->\n%s', pprint.pformat(spec_def), pprint.pformat(expanded_def))
+        return expanded_def
+
     def validate_definition(self, definition_name, dict_to_test, definition=None):
         """Validate the given dict according to the given definition.
 
@@ -510,15 +537,7 @@ class SwaggerParser(object):
 
         # if spec_def is an allOf, then we need to create the compounded definition
         if 'allOf' in spec_def:
-            expanded_def = {}
-            # this expects $ref to be higher up in the array
-            for spec_part in spec_def['allOf']:
-                if '$ref' in spec_part:
-                    expanded_def.update(self.specification['definitions'][spec_part['$ref'].split('/')[-1]])
-                else:
-                    # todo handle required
-                    expanded_def['properties'].update(spec_part['properties'])
-            spec_def = expanded_def
+            spec_def = self.expand_allOf_definition(spec_def)
 
 
         all_required_keys_present = all(req in dict_to_test.keys() for req in spec_def.get('required', {}))
