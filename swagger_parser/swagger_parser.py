@@ -55,10 +55,7 @@ class SwaggerParser(object):
             if swagger_path is not None:
                 # Open yaml file
                 arguments = {}
-                with codecs.open(swagger_path, 'r', 'utf-8') as swagger_yaml:
-                    swagger_template = swagger_yaml.read()
-                    swagger_string = jinja2.Template(swagger_template).render(**arguments)
-                    self.specification = yaml.safe_load(swagger_string)
+                self.specification = self.load_spec_from_file(arguments, swagger_path)
             elif swagger_yaml is not None:
                 json_ = yaml.safe_load(swagger_yaml)
                 json_string = json.dumps(json_)
@@ -85,6 +82,19 @@ class SwaggerParser(object):
         self.operation = {}
         self.generated_operation = {}
         self.get_paths_data()
+
+    def load_spec_from_file(self, arguments, specification_path):
+        arguments = arguments or {}
+
+        with open(specification_path, mode='rb') as swagger_yaml:
+            contents = swagger_yaml.read()
+            try:
+                swagger_template = contents.decode()
+            except UnicodeDecodeError:
+                swagger_template = contents.decode('utf-8', 'replace')
+
+            swagger_string = jinja2.Template(swagger_template).render(**arguments)
+            return yaml.safe_load(swagger_string)  # type: dict
 
     def build_definitions_example(self):
         """Parse all definitions in the swagger specification."""
@@ -173,6 +183,7 @@ class SwaggerParser(object):
         # Enum
         if 'enum' in prop_spec.keys():
             return prop_spec['enum'][0]
+
         # From definition
         if '$ref' in prop_spec.keys():
             return self._example_from_definition(prop_spec)
@@ -280,6 +291,8 @@ class SwaggerParser(object):
             return [False, True]
         elif type == 'null':
             return ['null', 'null']
+        elif type == 'object':
+            return [{}, {}]
 
     @staticmethod
     def _definition_from_example(example):
@@ -383,12 +396,7 @@ class SwaggerParser(object):
         # if items is a list, then each item has its own spec
         if isinstance(prop_spec['items'], list):
             return [self.get_example_from_prop_spec(item_prop_spec) for item_prop_spec in prop_spec['items']]
-        # Standard types in array
-        elif 'type' in prop_spec['items'].keys():
-            if 'format' in prop_spec['items'].keys() and prop_spec['items']['format'] == 'date-time':
-                return self._get_example_from_basic_type('datetime')
-            else:
-                return self._get_example_from_basic_type(prop_spec['items']['type'])
+
 
         # Array with definition
         elif ('$ref' in prop_spec['items'].keys() or
@@ -419,6 +427,13 @@ class SwaggerParser(object):
                 if example is not None:
                     prop_example[prop_name] = example
             return [prop_example]
+        # Standard types in array
+        elif 'type' in prop_spec['items'].keys():
+
+            if 'format' in prop_spec['items'].keys() and prop_spec['items']['format'] == 'date-time':
+                return self._get_example_from_basic_type('datetime')
+            else:
+                return self._get_example_from_basic_type(prop_spec['items']['type'])
 
     def get_dict_definition(self, dict, get_list=False):
         """Get the definition name of the given dict.
@@ -556,11 +571,11 @@ class SwaggerParser(object):
                 continue
             if value is not None:
                 if key not in properties_dict:  # Extra arg
-                    logging.warn('Found key %s not defined in %s data=%s', key, definition_name,  dict_to_test)
+                    logging.warning('Found key %s not defined in %s data=%s', key, definition_name,  dict_to_test)
                     return False
                 else:  # Check type
                     if not self._validate_type(properties_dict[key], value):
-                        logging.warn("Failed to validate %s %s %s", definition_name, properties_dict[key], value)
+                        logging.warning("Failed to validate %s [%s]\nspec=%s\nvalue=%s", definition_name, key, properties_dict[key], value)
                         return False
 
         return True
@@ -588,9 +603,11 @@ class SwaggerParser(object):
                 return False
 
             # Check type
-            if ('type' in properties_spec['items'].keys() and
-                    any(not self.check_type(item, properties_spec['items']['type']) for item in value)):
-                return False
+            if 'type' in properties_spec['items'].keys():
+                return any(not self.validate_definition(None, item, definition=properties_spec)
+                                                        for item in value)
+                    # any(not self.check_type(item, properties_spec['items']['type']) for item in value)):
+
             # Check ref
             elif ('$ref' in properties_spec['items'].keys()):
                 def_name = self.get_definition_name_from_ref(properties_spec['items']['$ref'])
