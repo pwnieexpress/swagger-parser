@@ -98,7 +98,7 @@ class SwaggerParser(object):
 
     def build_definitions_example(self):
         """Parse all definitions in the swagger specification."""
-        for def_name, def_spec in self.specification.get('definitions', {}).items():
+        for def_name in sorted(self.specification.get('definitions', {}).keys()):
             self.build_one_definition_example(def_name)
 
     def build_one_definition_example(self, def_name):
@@ -242,6 +242,14 @@ class SwaggerParser(object):
             additional_property = True
             if 'properties' not in local_spec:
                 local_spec['properties'] = {}
+
+            # support true/fales
+            if isinstance(spec['additionalProperties'], bool):
+                if spec['additionalProperties']:
+                    local_spec['additionalProperties'] = {'type': 'string'}
+                else:
+                    raise Exception("Do not support additionalProperties False")
+
             local_spec['properties'].update({
                 'any_prop1': local_spec['additionalProperties'],
                 'any_prop2': local_spec['additionalProperties'],
@@ -291,8 +299,7 @@ class SwaggerParser(object):
             return [False, True]
         elif type == 'null':
             return ['null', 'null']
-        elif type == 'object':
-            return [{}, {}]
+
 
     @staticmethod
     def _definition_from_example(example):
