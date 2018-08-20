@@ -570,8 +570,14 @@ class SwaggerParser(object):
         if not isinstance(dict_to_test, dict):
             return self._validate_type(spec_def, dict_to_test)
 
+
+
         # Check no extra arg & type
         properties_dict = spec_def.get('properties', {})
+
+        if not properties_dict and 'additionalProperties' in spec_def and spec_def['additionalProperties']:
+            # base case comparing against empty object definition
+            return True
         for key, value in dict_to_test.items():
             if key == '_id':
                 # let this one go
