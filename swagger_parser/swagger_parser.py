@@ -19,7 +19,7 @@ try:
 except ImportError:  # Python 3
     from io import StringIO
 
-from swagger_spec_validator.validator20 import validate_spec
+from openapi_spec_validator import validate_spec
 
 
 class SwaggerParser(object):
